@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="cn">
+<head>
+    <meta charset="UTF-8">
+    <title>飞行模拟</title>
+    <script type="text/javascript" src="js/Cesium/Cesium.js"></script>
+    <style>
+        @import url(js/Cesium/Widgets/widgets.css);
+        html, body, #cesiumContainer {
+            width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+<script>
+    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIwZDZlNzAzYy0wNmFhLTQ1NjQtODVkYS01Y2M2MjZjNzQ1MjgiLCJpZCI6MTg4ODYsInNjb3BlcyI6WyJhc3IiLCJnYyJdLCJpYXQiOjE1NzQ2NDY1MTh9.x7Z2Pylh0FDctvGJDVnpKyyDwZVjlU5-C5Er-zcfwZ0';
+    var viewer = new Cesium.Viewer('cesiumContainer',{
+        //baseLayerPicker:false,
+        timeline:true,
+        animation:true,
+        homeButton:false,
+        fullscreenButton:true,
+        infoBox:false,
+        sceneModePicker:false,
+        navigationInstructionsInitiallyVisible:false,
+        navigationHelpButton:false,
+        geocoder:false,
+        shouldAnimate:true,
+        imageryProvider: new Cesium.UrlTemplateImageryProvider({
+            url: 'http://www.google.cn/maps/vt?lyrs=s@716&x={x}&y={y}&z={z}'
+        }),
+        //animation:false,
+        selectionIndicator:false});
+    var totalSecond;//全局变量，飞机飞一圈要多长时间，单位秒
+    //度转弧度
+    function rad(d)
+    {
+        return d * Math.PI / 180.0;
+    }
+    //计算传入米的距离和所在纬度，计算与米距离相等的度距离
+    function doLngDegress(distance,latitude) {
+        var lngDegree =360.0/(40075016.68557849 * Math.cos(latitude))*distance;
+        return lngDegree;
+    }
+    //飞行于2000米高度，半径5000米的飞机
+    function flyAlongRound() {
+        //Generate a random circular pattern with varying heights.
+        function computeCirclularFlight(lon, lat, radius2) {
+            var radius=doLngDegress(radius2,rad(lat));
+            var perSegmentTime=totalSecond/36;//转一圈插值36个点模拟圆，算出每段需要的时间
+            //var radius=0.03;
+            var property = new Cesium.SampledPositionProperty();
+            var j=0;
+            for (var i = 0; i <= 360; i += 10) {//把飞机飞行的圆圈设为36个点，来模拟一个圆，每两个点之间用一个property插值平滑飞行
+                var radians = Cesium.Math.toRadians(i);
+                var time = Cesium.JulianDate.addSeconds(start, j*perSegmentTime, new Cesium.JulianDate());
+                var position = Cesium.Cartesian3.fromDegrees(lon + (radius  * Math.cos(radians)), lat + (radius * Math.sin(radians)), 2000.0);
+                property.addSample(time, position);//生成飞行的一段
+                j++;
+            }
+            return property;
+        }
+
+        //Compute the entity position property.
+        var perimeter=2*Math.PI*5000.0;//5公里半径，转一圈多长距离
+        var perSecondMeter=300000/3600.0;//根据300公里每小时，算出每秒几米
+        totalSecond=perimeter/perSecondMeter;//算出转一圈需要几秒
+        var start = Cesium.JulianDate.fromDate(new Date(2015, 2, 25, 16));
+        var stop = Cesium.JulianDate.addSeconds(start, totalSecond, new Cesium.JulianDate());
+        var __position = computeCirclularFlight(141.949201825,22.07707498, 5000.0);
+
+        //Make sure viewer is at the desired time.
+        viewer.clock.startTime = start.clone();
+        viewer.clock.stopTime = stop.clone();
+        viewer.clock.currentTime = start.clone();
+        viewer.timeline.zoomTo(start, stop);
+        viewer.clock.clockRange = Cesium.ClockRange.LOOP_STOP; //Loop at the end
+        viewer.clock.multiplier = 1;
+        //viewer.clock.canAnimate = false;
+
+        var entityee = viewer.entities.add({
+            //Set the entity availability to the same interval as the simulation time.
+            availability: new Cesium.TimeIntervalCollection([new Cesium.TimeInterval({
+                start: start,
+                stop: stop
+            })]),
+            position: __position,
+            orientation: new Cesium.VelocityOrientationProperty(__position),
+            model: {
+                uri: 'model/F22.gltf',
+                scale: 8,
+                minimumPixelSize: 64
+                //heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND
+            },
+            //Show the path as a pink line sampled in 1 second increments.
+            path: {
+                resolution: 1,
+                material: new Cesium.PolylineGlowMaterialProperty({
+                    glowPower: 0.1,
+                    color: Cesium.Color.YELLOW
+                }),
+                width: 10
+            }
+        });
+        //viewer.trackedEntity = entityee;
+    }
+    flyAlongRound();//启动飞机飞行
+    //水面上有一条舰船，做自东向西的直线运动，运行速率24海里/小时
+    function sailFromEastToWest() {
+        var kilometer=24*1.852;//海里转千米
+        var perSecondMeter=kilometer*1000/3600.0;//根据24海里每小时，算出每秒几米
+        var flyLen=perSecondMeter*totalSecond;//算出飞机飞一圈，舰艇能行驶多远
+        var dLen=doLngDegress(flyLen,rad(22.07707498));//把纬度22度处的飞行一圈米距离转换为度距离
+        var start = Cesium.JulianDate.fromDate(new Date(2015, 2, 25, 16));
+        var stop = Cesium.JulianDate.addSeconds(start, totalSecond, new Cesium.JulianDate());//模拟时间为飞机飞一圈时间
+        var property = new Cesium.SampledPositionProperty();//两个时间点之间进行线性插值的一种Property,能使物体在两点间平滑移动
+        var time = Cesium.JulianDate.addSeconds(start, 0, new Cesium.JulianDate());
+        var position = Cesium.Cartesian3.fromDegrees(141.949201825+dLen, 22.07707498, 0.0);//以飞行中心点为基准，向东偏移飞机飞一圈的距离，让船由东向西走
+        property.addSample(time, position);//设定起点时间和位置
+        var position2 = Cesium.Cartesian3.fromDegrees(141.949201825, 22.07707498, 0.0);
+        var time2 = Cesium.JulianDate.addSeconds(start, totalSecond, new Cesium.JulianDate());
+        property.addSample(time2, position2);//设定终点时间和位置
+
+        var entityee = viewer.entities.add({
+            //Set the entity availability to the same interval as the simulation time.
+            availability: new Cesium.TimeIntervalCollection([new Cesium.TimeInterval({
+                start: start,
+                stop: stop
+            })]),
+            position: property,
+            orientation: new Cesium.VelocityOrientationProperty(property),
+            model: {
+                uri: 'model/Ship.gltf',
+                scale: 8,
+                minimumPixelSize: 64
+                //heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND
+            },
+            //Show the path as a pink line sampled in 1 second increments.
+            path: {
+                resolution: 1,
+                material: new Cesium.PolylineGlowMaterialProperty({
+                    glowPower: 0.1,
+                    color: Cesium.Color.GREEN
+                }),
+                width: 10
+            }
+        });
+    }
+    sailFromEastToWest();//启动船航行
+    var camera = viewer.camera;
+    var point = Cesium.Cartesian3.fromDegrees(141.949201825, 22.07707498, 25000.0);//视图定位到飞机范围
+    camera.setView({
+        destination : point,
+        orientation: {
+            heading : Cesium.Math.toRadians(0.0), //默认值
+            pitch : Cesium.Math.toRadians(-90.0), // 默认值
+            roll : 0.0 //默认值
+        }
+    });
+</script>
+</body>
+</html>
+]
